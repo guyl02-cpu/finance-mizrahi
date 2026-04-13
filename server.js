@@ -214,18 +214,21 @@ app.get('/upload', (req, res) => {
     h2 { margin-bottom: 30px; }
     .card { border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
     .card h3 { margin: 0 0 16px; font-size: 15px; }
-    label { display: block; margin-bottom: 8px; font-weight: bold; }
     input[type=file] { display: block; margin-bottom: 12px; }
     .btn-upload { background: #2563eb; color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; }
     .btn-upload:hover { background: #1d4ed8; }
     .msg { margin-top: 10px; font-size: 13px; color: green; }
-    .err { color: red; }
+    .msg.err { color: red; }
     .file-list { margin-top: 16px; border-top: 1px solid #eee; padding-top: 12px; }
     .file-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f3f3f3; font-size: 13px; }
     .file-row:last-child { border-bottom: none; }
     .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .btn-del { background: #ef4444; color: white; border: none; padding: 4px 12px; border-radius: 5px; cursor: pointer; font-size: 12px; margin-right: 8px; flex-shrink: 0; }
     .btn-del:hover { background: #dc2626; }
+    .btn-confirm { background: #16a34a; color: white; border: none; padding: 4px 12px; border-radius: 5px; cursor: pointer; font-size: 12px; margin-right: 4px; flex-shrink: 0; }
+    .btn-cancel { background: #6b7280; color: white; border: none; padding: 4px 10px; border-radius: 5px; cursor: pointer; font-size: 12px; flex-shrink: 0; }
+    .confirm-row { background: #fef2f2; border: 1px solid #fca5a5; border-radius: 6px; padding: 8px 10px; margin: 4px 0; display: flex; align-items: center; gap: 8px; font-size: 13px; }
+    .confirm-row span { flex: 1; }
     .empty { color: #999; font-size: 13px; margin-top: 8px; }
     a.back { display: block; margin-top: 30px; color: #2563eb; }
   </style>
@@ -252,25 +255,39 @@ app.get('/upload', (req, res) => {
   <a class="back" href="/">חזרה לדשבורד</a>
 
   <script>
+    function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
     async function loadFiles(type) {
       const list = document.getElementById(type + 'List');
       try {
         const r = await fetch('/api/files?type=' + type);
         const files = await r.json();
-        if (!files.length) { list.innerHTML = '<div class="empty">אין קבצים</div>'; return; }
+        if (!Array.isArray(files) || !files.length) { list.innerHTML = '<div class="empty">אין קבצים</div>'; return; }
         list.innerHTML = files.map(f =>
-          '<div class="file-row">' +
+          '<div class="file-row" id="row-' + type + '-' + btoa(encodeURIComponent(f)) + '">' +
             '<span class="file-name">' + escHtml(f) + '</span>' +
-            '<button class="btn-del" onclick="deleteFile(' + JSON.stringify(type) + ',' + JSON.stringify(f) + ')">מחק</button>' +
+            '<button class="btn-del" onclick="askDelete(' + JSON.stringify(type) + ',' + JSON.stringify(f) + ')">מחק</button>' +
           '</div>'
         ).join('');
       } catch(e) { list.innerHTML = '<div class="empty err">שגיאה בטעינת קבצים</div>'; }
     }
 
-    function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function askDelete(type, filename) {
+      const rowId = 'row-' + type + '-' + btoa(encodeURIComponent(filename));
+      const row = document.getElementById(rowId);
+      if (!row) return;
+      row.outerHTML =
+        '<div class="confirm-row" id="' + rowId + '">' +
+          '<span>למחוק את <b>' + escHtml(filename) + '</b>?</span>' +
+          '<button class="btn-confirm" onclick="doDelete(' + JSON.stringify(type) + ',' + JSON.stringify(filename) + ')">כן, מחק</button>' +
+          '<button class="btn-cancel" onclick="loadFiles(' + JSON.stringify(type) + ')">ביטול</button>' +
+        '</div>';
+    }
 
-    async function deleteFile(type, filename) {
-      if (!confirm('למחוק את הקובץ "' + filename + '"?')) return;
+    async function doDelete(type, filename) {
+      const list = document.getElementById(type + 'List');
+      const statusId = type + 'Msg';
+      const status = document.getElementById(statusId);
       try {
         const r = await fetch('/api/files/delete', {
           method: 'POST',
@@ -278,9 +295,19 @@ app.get('/upload', (req, res) => {
           body: JSON.stringify({ type, filename })
         });
         const d = await r.json();
-        if (d.ok) loadFiles(type);
-        else alert('שגיאה: ' + JSON.stringify(d));
-      } catch(e) { alert('שגיאה בחיבור: ' + e.message); }
+        if (d.ok) {
+          status.textContent = 'נמחק: ' + filename;
+          status.className = 'msg';
+          loadFiles(type);
+        } else {
+          status.textContent = 'שגיאה: ' + JSON.stringify(d);
+          status.className = 'msg err';
+          loadFiles(type);
+        }
+      } catch(e) {
+        status.textContent = 'שגיאת חיבור: ' + e.message;
+        status.className = 'msg err';
+      }
     }
 
     async function upload(type) {
