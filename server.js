@@ -168,15 +168,22 @@ app.get('/api/files', (req, res) => {
 
 // Delete file endpoint: POST /api/files/delete
 app.post('/api/files/delete', express.json(), (req, res) => {
+  console.log('DELETE body:', JSON.stringify(req.body));
   const { type, filename } = req.body || {};
-  if (type !== 'credit' && type !== 'bank') return res.status(400).json({ error: 'type must be credit or bank' });
+  if (type !== 'credit' && type !== 'bank') return res.status(400).json({ error: 'type must be credit or bank', got: type });
   if (!filename) return res.status(400).json({ error: 'filename required' });
-  // Prevent path traversal
   const safe = path.basename(filename);
   const dir = type === 'credit' ? EXCEL_DIR : BANK_DIR;
   const filepath = path.join(dir, safe);
-  if (!fs.existsSync(filepath)) return res.status(404).json({ error: 'not found' });
-  fs.unlinkSync(filepath);
+  console.log('DELETE path:', filepath, 'exists:', fs.existsSync(filepath));
+  const allFiles = fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+  console.log('Files in dir:', allFiles);
+  if (!fs.existsSync(filepath)) return res.status(404).json({ error: 'not found', path: filepath, files: allFiles });
+  try {
+    fs.unlinkSync(filepath);
+  } catch(e) {
+    return res.status(500).json({ error: 'unlink failed: ' + e.message });
+  }
   if (type === 'credit') updateData();
   console.log('Deleted: ' + safe);
   res.json({ ok: true });
@@ -272,8 +279,8 @@ app.get('/upload', (req, res) => {
         });
         const d = await r.json();
         if (d.ok) loadFiles(type);
-        else alert('שגיאה: ' + d.error);
-      } catch(e) { alert('שגיאה בחיבור'); }
+        else alert('שגיאה: ' + JSON.stringify(d));
+      } catch(e) { alert('שגיאה בחיבור: ' + e.message); }
     }
 
     async function upload(type) {
