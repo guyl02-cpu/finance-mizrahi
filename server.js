@@ -162,10 +162,11 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   const type = req.query.type;
   if (type !== 'credit' && type !== 'bank') return res.status(400).json({ error: 'type must be credit or bank' });
   const destDir = type === 'credit' ? EXCEL_DIR : BANK_DIR;
-  const dest = path.join(destDir, req.file.originalname);
+  const filename = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+  const dest = path.join(destDir, filename);
   fs.writeFileSync(dest, req.file.buffer);
   if (type === 'credit') updateData();
-  res.json({ ok: true, filename: req.file.originalname });
+  res.json({ ok: true, filename });
 });
 
 // Upload page
