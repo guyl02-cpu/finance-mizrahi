@@ -156,6 +156,33 @@ app.get('/api/bank/:filename', (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// List files endpoint: GET /api/files?type=credit|bank
+app.get('/api/files', (req, res) => {
+  const type = req.query.type;
+  if (type !== 'credit' && type !== 'bank') return res.status(400).json({ error: 'type must be credit or bank' });
+  const dir = type === 'credit' ? EXCEL_DIR : BANK_DIR;
+  if (!fs.existsSync(dir)) return res.json([]);
+  const files = fs.readdirSync(dir).filter(f => f.endsWith('.xlsx') && !f.startsWith('~$'));
+  res.json(files);
+});
+
+// Delete file endpoint: DELETE /api/files?type=credit|bank&filename=xxx
+app.delete('/api/files', (req, res) => {
+  const type = req.query.type;
+  const filename = req.query.filename;
+  if (type !== 'credit' && type !== 'bank') return res.status(400).json({ error: 'type must be credit or bank' });
+  if (!filename) return res.status(400).json({ error: 'filename required' });
+  // Prevent path traversal
+  const safe = path.basename(filename);
+  const dir = type === 'credit' ? EXCEL_DIR : BANK_DIR;
+  const filepath = path.join(dir, safe);
+  if (!fs.existsSync(filepath)) return res.status(404).json({ error: 'not found' });
+  fs.unlinkSync(filepath);
+  if (type === 'credit') updateData();
+  console.log('Deleted: ' + safe);
+  res.json({ ok: true });
+});
+
 // Upload endpoint: POST /api/upload?type=credit|bank
 app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'no file' });
@@ -175,40 +202,77 @@ app.get('/upload', (req, res) => {
 <html dir="rtl" lang="he">
 <head>
   <meta charset="UTF-8">
-  <title>העלאת קבצים</title>
+  <title>ניהול קבצים</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 500px; margin: 60px auto; padding: 20px; direction: rtl; }
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: 60px auto; padding: 20px; direction: rtl; }
     h2 { margin-bottom: 30px; }
     .card { border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+    .card h3 { margin: 0 0 16px; font-size: 15px; }
     label { display: block; margin-bottom: 8px; font-weight: bold; }
     input[type=file] { display: block; margin-bottom: 12px; }
-    button { background: #2563eb; color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; }
-    button:hover { background: #1d4ed8; }
+    .btn-upload { background: #2563eb; color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+    .btn-upload:hover { background: #1d4ed8; }
     .msg { margin-top: 10px; font-size: 13px; color: green; }
     .err { color: red; }
-    a { display: block; margin-top: 30px; color: #2563eb; }
+    .file-list { margin-top: 16px; border-top: 1px solid #eee; padding-top: 12px; }
+    .file-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f3f3f3; font-size: 13px; }
+    .file-row:last-child { border-bottom: none; }
+    .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .btn-del { background: #ef4444; color: white; border: none; padding: 4px 12px; border-radius: 5px; cursor: pointer; font-size: 12px; margin-right: 8px; flex-shrink: 0; }
+    .btn-del:hover { background: #dc2626; }
+    .empty { color: #999; font-size: 13px; margin-top: 8px; }
+    a.back { display: block; margin-top: 30px; color: #2563eb; }
   </style>
 </head>
 <body>
-  <h2>העלאת קבצי Excel</h2>
+  <h2>ניהול קבצי Excel</h2>
 
   <div class="card">
-    <label>אשראי (כרטיס אשראי)</label>
+    <h3>אשראי (כרטיס אשראי)</h3>
     <input type="file" id="creditFile" accept=".xlsx">
-    <button onclick="upload('credit')">העלה</button>
+    <button class="btn-upload" onclick="upload('credit')">העלה</button>
     <div class="msg" id="creditMsg"></div>
+    <div class="file-list" id="creditList"></div>
   </div>
 
   <div class="card">
-    <label>עובר ושב (חשבון עו"ש)</label>
+    <h3>עובר ושב (חשבון עו"ש)</h3>
     <input type="file" id="bankFile" accept=".xlsx">
-    <button onclick="upload('bank')">העלה</button>
+    <button class="btn-upload" onclick="upload('bank')">העלה</button>
     <div class="msg" id="bankMsg"></div>
+    <div class="file-list" id="bankList"></div>
   </div>
 
-  <a href="/">חזרה לדשבורד</a>
+  <a class="back" href="/">חזרה לדשבורד</a>
 
   <script>
+    async function loadFiles(type) {
+      const list = document.getElementById(type + 'List');
+      try {
+        const r = await fetch('/api/files?type=' + type);
+        const files = await r.json();
+        if (!files.length) { list.innerHTML = '<div class="empty">אין קבצים</div>'; return; }
+        list.innerHTML = files.map(f =>
+          '<div class="file-row">' +
+            '<span class="file-name">' + escHtml(f) + '</span>' +
+            '<button class="btn-del" onclick="deleteFile(' + JSON.stringify(type) + ',' + JSON.stringify(f) + ')">מחק</button>' +
+          '</div>'
+        ).join('');
+      } catch(e) { list.innerHTML = '<div class="empty err">שגיאה בטעינת קבצים</div>'; }
+    }
+
+    function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    async function deleteFile(type, filename) {
+      if (!confirm('למחוק את הקובץ "' + filename + '"?')) return;
+      try {
+        const r = await fetch('/api/files?type=' + type + '&filename=' + encodeURIComponent(filename), { method: 'DELETE' });
+        const d = await r.json();
+        if (d.ok) loadFiles(type);
+        else alert('שגיאה: ' + d.error);
+      } catch(e) { alert('שגיאה'); }
+    }
+
     async function upload(type) {
       const input = document.getElementById(type + 'File');
       const msg = document.getElementById(type + 'Msg');
@@ -220,10 +284,17 @@ app.get('/upload', (req, res) => {
       try {
         const r = await fetch('/api/upload?type=' + type, { method: 'POST', body: fd });
         const d = await r.json();
-        if (d.ok) { msg.textContent = 'הועלה: ' + d.filename; msg.className = 'msg'; }
-        else { msg.textContent = 'שגיאה: ' + d.error; msg.className = 'msg err'; }
+        if (d.ok) {
+          msg.textContent = 'הועלה: ' + d.filename;
+          msg.className = 'msg';
+          input.value = '';
+          loadFiles(type);
+        } else { msg.textContent = 'שגיאה: ' + d.error; msg.className = 'msg err'; }
       } catch(e) { msg.textContent = 'שגיאה'; msg.className = 'msg err'; }
     }
+
+    loadFiles('credit');
+    loadFiles('bank');
   </script>
 </body>
 </html>`);
