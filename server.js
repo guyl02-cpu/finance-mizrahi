@@ -3,15 +3,26 @@ const xlsx = require('xlsx');
 const chokidar = require('chokidar');
 const fs = require('fs');
 const path = require('path');
+const multer = require('multer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DIR = __dirname;
-const EXCEL_DIR = path.join(DIR, '\u05D0\u05E9\u05E8\u05D0\u05D9');
-const BANK_DIR  = path.join(DIR, '\u05E2\u05D5\u05E9');
-const DATA_FILE = path.join(DIR, 'data.json');
+
+// On Railway, DATA_DIR points to the persistent volume. Locally falls back to __dirname.
+const DATA_DIR = process.env.DATA_DIR || DIR;
+const EXCEL_DIR = path.join(DATA_DIR, '\u05D0\u05E9\u05E8\u05D0\u05D9');
+const BANK_DIR  = path.join(DATA_DIR, '\u05E2\u05D5\u05E9');
+const DATA_FILE = path.join(DATA_DIR, 'data.json');
 
 const MONTH_HE = {'\u05D9\u05E0\u05D5\u05D0\u05E8':1,'\u05E4\u05D1\u05E8\u05D5\u05D0\u05E8':2,'\u05DE\u05E8\u05E5':3,'\u05D0\u05E4\u05E8\u05D9\u05DC':4,'\u05DE\u05D0\u05D9':5,'\u05D9\u05D5\u05E0\u05D9':6,'\u05D9\u05D5\u05DC\u05D9':7,'\u05D0\u05D5\u05D2\u05D5\u05E1\u05D8':8,'\u05E1\u05E4\u05D8\u05DE\u05D1\u05E8':9,'\u05D0\u05D5\u05E7\u05D8\u05D5\u05D1\u05E8':10,'\u05E0\u05D5\u05D1\u05DE\u05D1\u05E8':11,'\u05D3\u05E6\u05DE\u05D1\u05E8':12};
+
+// Ensure directories exist
+if (!fs.existsSync(EXCEL_DIR)) fs.mkdirSync(EXCEL_DIR, { recursive: true });
+if (!fs.existsSync(BANK_DIR))  fs.mkdirSync(BANK_DIR,  { recursive: true });
+
+// Multer: store uploaded files in memory, then save manually
+const upload = multer({ storage: multer.memoryStorage() });
 
 function parseBankFile(filepath) {
   const wb = xlsx.readFile(filepath, { raw: true });
@@ -84,7 +95,6 @@ function parseDate(val) {
 }
 
 function readAllFiles() {
-  if (!fs.existsSync(EXCEL_DIR)) fs.mkdirSync(EXCEL_DIR);
   const files = fs.readdirSync(EXCEL_DIR).filter(f => f.endsWith('.xlsx') && !f.startsWith('~$'));
   const allRows = [];
   const seen = new Set();
@@ -144,6 +154,78 @@ app.get('/api/bank/:filename', (req, res) => {
     const info = getBankFiles().find(f => f.filename === name);
     res.json({ month: info ? info.monthLabel : name, transactions });
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Upload endpoint: POST /api/upload?type=credit|bank
+app.post('/api/upload', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'no file' });
+  const type = req.query.type;
+  if (type !== 'credit' && type !== 'bank') return res.status(400).json({ error: 'type must be credit or bank' });
+  const destDir = type === 'credit' ? EXCEL_DIR : BANK_DIR;
+  const dest = path.join(destDir, req.file.originalname);
+  fs.writeFileSync(dest, req.file.buffer);
+  if (type === 'credit') updateData();
+  res.json({ ok: true, filename: req.file.originalname });
+});
+
+// Upload page
+app.get('/upload', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+  <meta charset="UTF-8">
+  <title>העלאת קבצים</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 500px; margin: 60px auto; padding: 20px; direction: rtl; }
+    h2 { margin-bottom: 30px; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+    label { display: block; margin-bottom: 8px; font-weight: bold; }
+    input[type=file] { display: block; margin-bottom: 12px; }
+    button { background: #2563eb; color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+    button:hover { background: #1d4ed8; }
+    .msg { margin-top: 10px; font-size: 13px; color: green; }
+    .err { color: red; }
+    a { display: block; margin-top: 30px; color: #2563eb; }
+  </style>
+</head>
+<body>
+  <h2>העלאת קבצי Excel</h2>
+
+  <div class="card">
+    <label>אשראי (כרטיס אשראי)</label>
+    <input type="file" id="creditFile" accept=".xlsx">
+    <button onclick="upload('credit')">העלה</button>
+    <div class="msg" id="creditMsg"></div>
+  </div>
+
+  <div class="card">
+    <label>עובר ושב (חשבון עו"ש)</label>
+    <input type="file" id="bankFile" accept=".xlsx">
+    <button onclick="upload('bank')">העלה</button>
+    <div class="msg" id="bankMsg"></div>
+  </div>
+
+  <a href="/">חזרה לדשבורד</a>
+
+  <script>
+    async function upload(type) {
+      const input = document.getElementById(type + 'File');
+      const msg = document.getElementById(type + 'Msg');
+      if (!input.files[0]) { msg.textContent = 'בחר קובץ'; msg.className = 'msg err'; return; }
+      const fd = new FormData();
+      fd.append('file', input.files[0]);
+      msg.textContent = 'מעלה...';
+      msg.className = 'msg';
+      try {
+        const r = await fetch('/api/upload?type=' + type, { method: 'POST', body: fd });
+        const d = await r.json();
+        if (d.ok) { msg.textContent = 'הועלה: ' + d.filename; msg.className = 'msg'; }
+        else { msg.textContent = 'שגיאה: ' + d.error; msg.className = 'msg err'; }
+      } catch(e) { msg.textContent = 'שגיאה'; msg.className = 'msg err'; }
+    }
+  </script>
+</body>
+</html>`);
 });
 
 app.listen(PORT, () => console.log('\nDashboard: http://localhost:' + PORT + '\n'));
