@@ -257,52 +257,71 @@ app.get('/upload', (req, res) => {
   <script>
     function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
+    const pendingDelete = {};
+
     async function loadFiles(type) {
       const list = document.getElementById(type + 'List');
       try {
         const r = await fetch('/api/files?type=' + type);
         const files = await r.json();
         if (!Array.isArray(files) || !files.length) { list.innerHTML = '<div class="empty">אין קבצים</div>'; return; }
-        list.innerHTML = files.map(f =>
-          '<div class="file-row" id="row-' + type + '-' + btoa(encodeURIComponent(f)) + '">' +
-            '<span class="file-name">' + escHtml(f) + '</span>' +
-            '<button class="btn-del" onclick="askDelete(' + JSON.stringify(type) + ',' + JSON.stringify(f) + ')">מחק</button>' +
-          '</div>'
-        ).join('');
+        list.innerHTML = '';
+        files.forEach((f, i) => {
+          const key = type + '_' + i;
+          pendingDelete[key] = { type, filename: f };
+          const row = document.createElement('div');
+          row.className = 'file-row';
+          row.id = 'row_' + key;
+          row.innerHTML = '<span class="file-name">' + escHtml(f) + '</span>';
+          const btn = document.createElement('button');
+          btn.className = 'btn-del';
+          btn.textContent = 'מחק';
+          btn.onclick = function() { askDelete(key); };
+          row.appendChild(btn);
+          list.appendChild(row);
+        });
       } catch(e) { list.innerHTML = '<div class="empty err">שגיאה בטעינת קבצים</div>'; }
     }
 
-    function askDelete(type, filename) {
-      const rowId = 'row-' + type + '-' + btoa(encodeURIComponent(filename));
-      const row = document.getElementById(rowId);
+    function askDelete(key) {
+      const info = pendingDelete[key];
+      if (!info) return;
+      const row = document.getElementById('row_' + key);
       if (!row) return;
-      row.outerHTML =
-        '<div class="confirm-row" id="' + rowId + '">' +
-          '<span>למחוק את <b>' + escHtml(filename) + '</b>?</span>' +
-          '<button class="btn-confirm" onclick="doDelete(' + JSON.stringify(type) + ',' + JSON.stringify(filename) + ')">כן, מחק</button>' +
-          '<button class="btn-cancel" onclick="loadFiles(' + JSON.stringify(type) + ')">ביטול</button>' +
-        '</div>';
+      row.className = 'confirm-row';
+      row.innerHTML =
+        '<span>למחוק <b>' + escHtml(info.filename) + '</b>?</span>';
+      const yes = document.createElement('button');
+      yes.className = 'btn-confirm';
+      yes.textContent = 'כן, מחק';
+      yes.onclick = function() { doDelete(key); };
+      const no = document.createElement('button');
+      no.className = 'btn-cancel';
+      no.textContent = 'ביטול';
+      no.onclick = function() { loadFiles(info.type); };
+      row.appendChild(yes);
+      row.appendChild(no);
     }
 
-    async function doDelete(type, filename) {
-      const list = document.getElementById(type + 'List');
-      const statusId = type + 'Msg';
-      const status = document.getElementById(statusId);
+    async function doDelete(key) {
+      const info = pendingDelete[key];
+      if (!info) return;
+      const status = document.getElementById(info.type + 'Msg');
       try {
         const r = await fetch('/api/files/delete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type, filename })
+          body: JSON.stringify({ type: info.type, filename: info.filename })
         });
         const d = await r.json();
         if (d.ok) {
-          status.textContent = 'נמחק: ' + filename;
+          status.textContent = 'נמחק: ' + info.filename;
           status.className = 'msg';
-          loadFiles(type);
+          loadFiles(info.type);
         } else {
           status.textContent = 'שגיאה: ' + JSON.stringify(d);
           status.className = 'msg err';
-          loadFiles(type);
+          loadFiles(info.type);
         }
       } catch(e) {
         status.textContent = 'שגיאת חיבור: ' + e.message;
