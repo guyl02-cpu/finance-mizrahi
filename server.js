@@ -166,10 +166,9 @@ app.get('/api/files', (req, res) => {
   res.json(files);
 });
 
-// Delete file endpoint: DELETE /api/files?type=credit|bank&filename=xxx
-app.delete('/api/files', (req, res) => {
-  const type = req.query.type;
-  const filename = req.query.filename;
+// Delete file endpoint: POST /api/files/delete
+app.post('/api/files/delete', express.json(), (req, res) => {
+  const { type, filename } = req.body || {};
   if (type !== 'credit' && type !== 'bank') return res.status(400).json({ error: 'type must be credit or bank' });
   if (!filename) return res.status(400).json({ error: 'filename required' });
   // Prevent path traversal
@@ -266,11 +265,15 @@ app.get('/upload', (req, res) => {
     async function deleteFile(type, filename) {
       if (!confirm('למחוק את הקובץ "' + filename + '"?')) return;
       try {
-        const r = await fetch('/api/files?type=' + type + '&filename=' + encodeURIComponent(filename), { method: 'DELETE' });
+        const r = await fetch('/api/files/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, filename })
+        });
         const d = await r.json();
         if (d.ok) loadFiles(type);
         else alert('שגיאה: ' + d.error);
-      } catch(e) { alert('שגיאה'); }
+      } catch(e) { alert('שגיאה בחיבור'); }
     }
 
     async function upload(type) {
