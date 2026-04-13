@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>לוח בקרה פיננסי</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="עוש/bank_style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+
+  <nav class="main-nav">
+    <button class="nav-btn active" data-section="credit" onclick="showSection('credit')">נתוני אשראי</button>
+    <button class="nav-btn" data-section="bank" onclick="showSection('bank')">עובר ושב</button>
+  </nav>
+
+  <!-- ===== דשבורד אשראי ===== -->
+  <div id="section-credit">
+    <header>
+      <h1>לוח בקרה — הוצאות כרטיס אשראי</h1>
+      <p id="last-updated"></p>
+      <button id="export-pdf" onclick="exportPDF()">ייצוא ל-PDF ↓</button>
+    </header>
+
+    <section class="summary-grid">
+      <div class="card"><span class="label">סה"כ הוצאות</span><span class="value" id="total"></span></div>
+      <div class="card"><span class="label">ממוצע חודשי</span><span class="value" id="monthly-avg"></span></div>
+      <div class="card"><span class="label">מספר עסקאות</span><span class="value" id="tx-count"></span></div>
+      <div class="card"><span class="label">ההוצאה הגדולה ביותר</span><span class="value" id="max-expense"></span></div>
+    </section>
+
+    <section class="charts-row">
+      <div class="chart-card wide">
+        <h2>הוצאות לפי חודש</h2>
+        <canvas id="barChart"></canvas>
+      </div>
+      <div class="chart-card">
+        <h2>הוצאות לפי בית עסק</h2>
+        <canvas id="pieChart"></canvas>
+      </div>
+    </section>
+
+    <section class="table-card">
+      <h2>10 הוצאות גדולות ביותר</h2>
+      <table id="top-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>תאריך</th>
+            <th>בית עסק</th>
+            <th>סכום</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </div>
+
+  <!-- ===== דשבורד עו"ש ===== -->
+  <div id="section-bank" style="display:none">
+    <header class="bank-header">
+      <h1>לוח בקרה — עובר ושב</h1>
+      <div class="bank-controls">
+        <select id="bank-month-select"><option>טוען...</option></select>
+        <button id="bank-export-pdf" onclick="exportBankPDF()">ייצוא PDF ↓</button>
+      </div>
+    </header>
+
+    <!-- כרטיסי סיכום חודשי -->
+    <section class="summary-grid">
+      <div class="card"><span class="label">יתרה נוכחית</span><span class="value" id="bank-balance">—</span></div>
+      <div class="card"><span class="label" id="label-credits">סך הכנסות החודש</span><span class="value" id="bank-credits" style="color:var(--green)">—</span></div>
+      <div class="card"><span class="label" id="label-debits">סך הוצאות החודש</span><span class="value" id="bank-debits" style="color:#ef4444">—</span></div>
+      <div class="card"><span class="label">תזרים נטו</span><span class="value" id="bank-net">—</span></div>
+    </section>
+
+    <!-- גרפים שורה 1: מגמת יתרה + עוגה -->
+    <section class="charts-row">
+      <div class="chart-card wide">
+        <h2>מגמת יתרה לאורך החודש</h2>
+        <canvas id="bankLineChart"></canvas>
+      </div>
+      <div class="chart-card">
+        <h2>פילוח הוצאות לפי קטגוריה</h2>
+        <canvas id="bankPieChart"></canvas>
+      </div>
+    </section>
+
+    <!-- גרפים שורה 2: שבועי + טופ 3 -->
+    <section class="charts-row">
+      <div class="chart-card wide">
+        <h2 id="week-chart-title">הכנסות מול הוצאות לפי שבוע</h2>
+        <canvas id="bankWeekChart"></canvas>
+      </div>
+      <div class="chart-card">
+        <h2>3 הוצאות גדולות החודש</h2>
+        <div id="bank-top3"></div>
+      </div>
+    </section>
+
+    <!-- טבלת תנועות -->
+    <section class="table-card">
+      <div class="table-controls">
+        <h2>תנועות חשבון</h2>
+        <div class="filters">
+          <input type="text" id="bank-search" placeholder="חיפוש בפירוט...">
+          <select id="bank-type-filter"><option value="">כל הסוגים</option></select>
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+        <table id="bank-tx-table">
+          <thead>
+            <tr>
+              <th>תאריך</th>
+              <th>פירוט</th>
+              <th>סוג תנועה</th>
+              <th>חובה</th>
+              <th>זכות</th>
+              <th>יתרה</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- חלק ב: סיכום כולל -->
+    <div id="bank-overall-section">
+      <h2 class="section-title">סיכום כולל – כל התקופה</h2>
+
+      <section class="summary-grid">
+        <div class="card"><span class="label">סך כל הזכויות</span><span class="value" id="overall-credits" style="color:var(--green)">—</span></div>
+        <div class="card"><span class="label">סך כל החובות</span><span class="value" id="overall-debits" style="color:#ef4444">—</span></div>
+        <div class="card"><span class="label">יתרה נכון להיום</span><span class="value" id="overall-balance">—</span></div>
+      </section>
+
+      <section class="charts-row" style="grid-template-columns:1fr">
+        <div class="chart-card">
+          <h2>יתרת סוף חודש לאורך כל התקופה</h2>
+          <canvas id="bankYearChart"></canvas>
+        </div>
+      </section>
+
+      <section class="table-card">
+        <h2>סיכום חודשי</h2>
+        <div style="overflow-x:auto">
+          <table id="bank-monthly-table">
+            <thead>
+              <tr>
+                <th>חודש</th>
+                <th>סך זכות</th>
+                <th>סך חובה</th>
+                <th>תזרים נטו</th>
+                <th>יתרה סוף חודש</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+            <tfoot>
+              <tr>
+                <th>סה"כ</th>
+                <th id="ft-credits">—</th>
+                <th id="ft-debits">—</th>
+                <th id="ft-net">—</th>
+                <th id="ft-balance">—</th>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+  <script src="עוש/bank_script.js"></script>
+  <script>
+    let bankInitialized = false;
+    function showSection(name) {
+      document.getElementById('section-credit').style.display = name === 'credit' ? '' : 'none';
+      document.getElementById('section-bank').style.display  = name === 'bank'   ? '' : 'none';
+      document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.section === name));
+      if (name === 'bank' && !bankInitialized) { bankInitialized = true; initBank(); }
+    }
+  </script>
+</body>
+</html>

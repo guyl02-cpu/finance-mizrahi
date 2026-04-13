@@ -1,0 +1,1 @@
+align text when you write to the righy (RTL)
